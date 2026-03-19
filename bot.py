@@ -11,7 +11,8 @@ COGS = ["cogs.courses", "cogs.grades", "cogs.professors"]
 class CourseCompassBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()
-        super().__init__(command_prefix="!", intents=intents)
+        intents.message_content = True
+        super().__init__(command_prefix=commands.when_mentioned, intents=intents)
 
     async def setup_hook(self):
         print("=== Setup hook called ===")
@@ -30,10 +31,8 @@ class CourseCompassBot(commands.Bot):
     async def on_ready(self):
         print(f"CourseCompass is online as {self.user} (ID: {self.user.id})")
         await self.change_presence(
-            activity=discord.Activity(
-                type=discord.ActivityType.watching,
-                name="VT course registrations 🦃"
-            )
+            status=discord.Status.online,
+            activity=discord.Game(name="/recommend")
         )
 
 

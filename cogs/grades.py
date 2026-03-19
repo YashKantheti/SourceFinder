@@ -17,12 +17,14 @@ class GradesCog(commands.Cog):
     )
     @app_commands.describe(course="Course code, e.g. CS 3114 or ECE 2574")
     async def grades(self, interaction: discord.Interaction, course: str):
-        await interaction.response.defer(thinking=True)
+        if not await _safe_defer(interaction):
+            return
 
         result = vt_data.query_course(course)
         if result is None:
             available = ", ".join(vt_data.get_course_codes()[:15])
-            await interaction.followup.send(
+            await _safe_followup_send(
+                interaction,
                 embed=_not_found_embed(
                     course,
                     f"Available courses include: {available} …\nUse `/grades CS 3114` format."
@@ -41,7 +43,7 @@ class GradesCog(commands.Cog):
         )
         embed.set_image(url="attachment://grades.png")
         embed.set_footer(text=f"Source: VT DataCommons  •  {semester}")
-        await interaction.followup.send(embed=embed, file=chart_file)
+        await _safe_followup_send(interaction, embed=embed, file=chart_file)
 
     @grades.autocomplete("course")
     async def grades_autocomplete(
@@ -66,7 +68,8 @@ class GradesCog(commands.Cog):
         course1: str,
         course2: str
     ):
-        await interaction.response.defer(thinking=True)
+        if not await _safe_defer(interaction):
+            return
 
         r1 = vt_data.query_course(course1)
         r2 = vt_data.query_course(course2)
@@ -77,7 +80,8 @@ class GradesCog(commands.Cog):
         if r2 is None:
             missing.append(course2.upper())
         if missing:
-            await interaction.followup.send(
+            await _safe_followup_send(
+                interaction,
                 embed=_not_found_embed(", ".join(missing), "Check the course code and try again."),
                 ephemeral=True
             )
@@ -103,7 +107,7 @@ class GradesCog(commands.Cog):
         )
         embed.set_image(url="attachment://compare.png")
         embed.set_footer(text="Source: VT DataCommons")
-        await interaction.followup.send(embed=embed, file=chart_file)
+        await _safe_followup_send(interaction, embed=embed, file=chart_file)
 
     @compare.autocomplete("course1")
     @compare.autocomplete("course2")
@@ -143,6 +147,26 @@ def _not_found_embed(course: str, hint: str = "") -> discord.Embed:
         color=discord.Color.red()
     )
     return embed
+
+
+async def _safe_defer(interaction: discord.Interaction) -> bool:
+    """Defer safely; return False if the interaction is already invalid/expired."""
+    try:
+        await interaction.response.defer(thinking=True)
+        return True
+    except discord.NotFound:
+        return False
+    except discord.InteractionResponded:
+        return True
+
+
+async def _safe_followup_send(interaction: discord.Interaction, **kwargs) -> bool:
+    """Send follow-up safely; return False if the interaction token is no longer valid."""
+    try:
+        await interaction.followup.send(**kwargs)
+        return True
+    except discord.NotFound:
+        return False
 
 
 async def setup(bot: commands.Bot):

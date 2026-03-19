@@ -58,7 +58,7 @@ A Discord bot for Virginia Tech students that provides AI-powered course recomme
 ## Running the Bot
 
 ```bash
-python bot.py
+/usr/local/bin/python3.11 bot.py
 ```
 
 You should see output like:
