@@ -12,17 +12,6 @@ import aiohttp
 
 VT_SCHOOL_ID = 1349  # Virginia Tech on RMP
 _RMP_GQL_URL = "https://www.ratemyprofessors.com/graphql"
-_AUTH = base64.b64encode(b"test:test").decode()
-_HEADERS = {
-    "Authorization": f"Basic {_AUTH}",
-    "Content-Type": "application/json",
-    "User-Agent": (
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/120.0.0.0 Safari/537.36"
-    ),
-    "Referer": "https://www.ratemyprofessors.com/",
-}
 
 _SEARCH_QUERY = """
 query TeacherSearch($text: String!, $schoolID: ID!) {
@@ -45,6 +34,19 @@ query TeacherSearch($text: String!, $schoolID: ID!) {
   }
 }
 """
+
+
+# Check if RMP has specific auth requirements - if not, we can strip these headers
+# The current test credentials ("test:test") are breaking the API calls
+_HEADERS_NO_AUTH = {
+    "Content-Type": "application/json",
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Safari/537.36"
+    ),
+    "Referer": "https://www.ratemyprofessors.com/",
+}
 
 
 class ProfessorResult:
@@ -73,7 +75,7 @@ async def search_professor(name: str, school_id: int = VT_SCHOOL_ID) -> Professo
 
     ssl_ctx = ssl.create_default_context(cafile=certifi.where())
     connector = aiohttp.TCPConnector(ssl=ssl_ctx)
-    async with aiohttp.ClientSession(headers=_HEADERS, connector=connector) as session:
+    async with aiohttp.ClientSession(headers=_HEADERS_NO_AUTH, connector=connector) as session:
         async with session.post(_RMP_GQL_URL, json=payload) as resp:
             if resp.status != 200:
                 raise RuntimeError(f"RMP returned HTTP {resp.status}")

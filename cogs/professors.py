@@ -111,7 +111,7 @@ def _not_found_embed(name: str) -> discord.Embed:
         title=f"Professor not found: {name}",
         description=(
             "No results on Rate My Professor for this name at Virginia Tech.\n"
-            "Try their full name, e.g. `/professor Godmar Back`."
+            "Try their full name, e.g. `/professor name Godmar Back`."
         ),
         color=discord.Color.red(),
     )
