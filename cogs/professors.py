@@ -1,25 +1,13 @@
 import discord
 from discord import app_commands
 from discord.ext import commands
-import asyncio
-import ratemyprofessor
+from utils.rmp import search_professor, ProfessorResult
 
 MAROON = 0x861F41
 ORANGE = 0xE5751F
 
-# Virginia Tech's school object is fetched once at startup
-_vt_school = None
-
-
-def _get_vt_school():
-    global _vt_school
-    if _vt_school is None:
-        _vt_school = ratemyprofessor.get_school_by_name("Virginia Tech")
-    return _vt_school
-
 
 def _rating_bar(rating: float, max_rating: float = 5.0, length: int = 10) -> str:
-    """Build a simple text progress bar for ratings."""
     filled = round((rating / max_rating) * length)
     return "█" * filled + "░" * (length - filled)
 
@@ -48,11 +36,7 @@ class ProfessorsCog(commands.Cog):
         await interaction.response.defer(thinking=True)
 
         try:
-            # RMP is a blocking library — run in thread pool to avoid blocking the event loop
-            loop = asyncio.get_event_loop()
-            prof = await loop.run_in_executor(
-                None, self._fetch_professor, name
-            )
+            prof = await search_professor(name)
         except Exception as e:
             await interaction.followup.send(
                 embed=_error_embed(f"Could not reach Rate My Professor: {e}"),
@@ -70,67 +54,53 @@ class ProfessorsCog(commands.Cog):
         embed = _build_professor_embed(prof)
         await interaction.followup.send(embed=embed)
 
-    def _fetch_professor(self, name: str):
-        school = _get_vt_school()
-        if school is None:
-            return None
-        return ratemyprofessor.get_professor_by_school_and_name(school, name)
 
+def _build_professor_embed(prof: ProfessorResult) -> discord.Embed:
+    rating = prof.rating
+    difficulty = prof.difficulty
+    would_take_again = prof.would_take_again
 
-def _build_professor_embed(prof) -> discord.Embed:
-    rating = getattr(prof, "rating", None)
-    difficulty = getattr(prof, "difficulty", None)
-    would_take_again = getattr(prof, "would_take_again", None)
-    department = getattr(prof, "department", "CS")
-    num_ratings = getattr(prof, "num_ratings", 0)
-
-    # Color based on rating quality
     if rating is None:
         color = discord.Color.greyple()
     elif rating >= 4.0:
-        color = 0x57F287  # green
+        color = 0x57F287   # green
     elif rating >= 3.0:
         color = ORANGE
     else:
-        color = 0xED4245  # red
+        color = 0xED4245   # red
 
     embed = discord.Embed(
         title=f"Prof. {prof.name}",
-        description=f"**{department}** · Virginia Tech",
+        description=f"**{prof.department}** · Virginia Tech",
         color=color,
-        url="https://www.ratemyprofessors.com"
+        url=prof.url,
     )
 
     if rating is not None:
         embed.add_field(
             name="Overall Rating",
             value=f"`{_rating_bar(rating)}` **{rating:.1f} / 5.0**",
-            inline=False
+            inline=False,
         )
     else:
-        embed.add_field(name="Overall Rating", value="N/A", inline=False)
+        embed.add_field(name="Overall Rating", value="No ratings yet", inline=False)
 
     if difficulty is not None:
         embed.add_field(
             name="Difficulty",
             value=f"`{_rating_bar(difficulty)}` **{difficulty:.1f} / 5.0**  ({_difficulty_label(difficulty)})",
-            inline=False
+            inline=False,
         )
 
-    if would_take_again is not None:
-        pct = round(would_take_again)
+    if would_take_again is not None and would_take_again >= 0:
         embed.add_field(
             name="Would Take Again",
-            value=f"**{pct}%** of students",
-            inline=True
+            value=f"**{round(would_take_again)}%** of students",
+            inline=True,
         )
 
-    if num_ratings:
-        embed.add_field(
-            name="Total Ratings",
-            value=str(num_ratings),
-            inline=True
-        )
+    if prof.num_ratings:
+        embed.add_field(name="Total Ratings", value=str(prof.num_ratings), inline=True)
 
     embed.set_footer(text="Data from ratemyprofessors.com — ratings may vary by semester")
     return embed
@@ -143,16 +113,12 @@ def _not_found_embed(name: str) -> discord.Embed:
             "No results on Rate My Professor for this name at Virginia Tech.\n"
             "Try their full name, e.g. `/professor Godmar Back`."
         ),
-        color=discord.Color.red()
+        color=discord.Color.red(),
     )
 
 
 def _error_embed(message: str) -> discord.Embed:
-    return discord.Embed(
-        title="Error",
-        description=message,
-        color=discord.Color.red()
-    )
+    return discord.Embed(title="Error", description=message, color=discord.Color.red())
 
 
 async def setup(bot: commands.Bot):

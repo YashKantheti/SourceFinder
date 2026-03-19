@@ -14,11 +14,18 @@ class CourseCompassBot(commands.Bot):
         super().__init__(command_prefix="!", intents=intents)
 
     async def setup_hook(self):
+        print("=== Setup hook called ===")
         for cog in COGS:
-            await self.load_extension(cog)
-            print(f"Loaded cog: {cog}")
-        await self.tree.sync()
-        print("Slash commands synced.")
+            try:
+                await self.load_extension(cog)
+                print(f"Loaded cog: {cog}")
+            except Exception as e:
+                print(f"Failed to load cog {cog}: {e}")
+        try:
+            await self.tree.sync()
+            print("Slash commands synced.")
+        except Exception as e:
+            print(f"Failed to sync slash commands: {e}")
 
     async def on_ready(self):
         print(f"CourseCompass is online as {self.user} (ID: {self.user.id})")
