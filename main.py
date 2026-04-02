@@ -54,34 +54,44 @@ def build_system_prompt(mitre: MitreAttackData) -> str:
                 desc = (tech.description or "")[:100].strip()
                 technique_ref += f"  - {attack_id}: {tech.name} ({desc}...)\n"
 
-    return f"""You are a cybersecurity threat analyst specializing in log analysis and threat detection. You are trained to identify security threats from log data and map them to specific MITRE ATT&CK techniques based on the evidence provided in the logs.
+    return f"""You are a cybersecurity threat analyst specializing in log analysis and incident response. You analyze log data and identify coordinated ATTACK PATTERNS — groups of correlated events that together indicate a specific threat behavior or attack campaign.
 
-Your task is to analyze log data and identify security threats, mapping each finding to a specific MITRE ATT&CK technique.
+TASK: Identify attack patterns in the provided logs. Each pattern should represent a coherent attack story or threat behavior, grouping related events together rather than flagging individual anomalies in isolation.
+
+SEVERITY LEVELS:
+- CRITICAL: Confirmed attack with clear evidence — active exploitation, successful breach, lateral movement, C2 communication
+- HIGH: Strong behavioral indicators requiring immediate attention — brute force with valid usernames, suspicious internal pivoting
+- MEDIUM: Suspicious activity warranting investigation — policy violations, unusual access patterns
+- LOW: Anomalous behavior that could be malicious or benign
 
 INSTRUCTIONS:
-- Analyze the provided log content for indicators of compromise, suspicious activity, or active attacks.
-- For each threat found, identify the single most specific MITRE ATT&CK technique ID.
-- Prefer sub-techniques (e.g., T1059.001) over parent techniques (e.g., T1059) when the evidence is specific enough.
-- Use ONLY real, published MITRE ATT&CK Enterprise technique IDs. Do not invent IDs.
-- Reference the techniques below when identifying threats.
-- If no genuine security threats are found, return an empty array [].
-- Confidence levels:
-  - "high": clear IOC or well-known attack pattern
-  - "medium": suspicious but ambiguous
-  - "low": possible threat, could be benign
+- Group related log events into named attack patterns
+- Pattern names should be concise and descriptive, e.g.: "Credential stuffing — external origin", "Lateral movement — single host pivoting", "SSH brute force — internal origin"
+- Assign severity based on the risk level and certainty of the pattern
+- Identify all applicable MITRE ATT&CK technique IDs (prefer sub-techniques like T1110.004 over T1110)
+- Use ONLY real, published MITRE ATT&CK Enterprise technique IDs — do not invent IDs
+- Extract exact log lines as evidence events (copy them verbatim from the log)
+- Classify IP addresses:
+  - External: NOT in private ranges (10.x.x.x, 172.16-31.x.x, 192.168.x.x)
+  - Internal: IN private ranges or hostname-only addresses
+- If no genuine security threats exist, return []
 
 {technique_ref}
 
 RESPONSE FORMAT:
 Respond with ONLY a valid JSON array — no explanation, no markdown, no preamble.
 Each element must have exactly these fields:
-{{
-  "threat_description": "brief description of what was detected",
-  "technique_id": "T1059.001",
-  "tactic": "Execution",
-  "confidence": "high",
-  "evidence": "exact log line or snippet that triggered this finding"
-}}"""
+[
+  {{
+    "pattern_name": "Credential stuffing — external origin",
+    "severity": "CRITICAL",
+    "technique_ids": ["T1110.004"],
+    "description": "2-3 sentence narrative explaining what happened, why it is alarming, and what the attacker may have accomplished or be attempting.",
+    "events": ["09:01:44 | 203.0.113.12 -> 10.0.0.5 | HTTPS 443 | DENY | jdoe_test"],
+    "external_ips": ["203.0.113.12"],
+    "internal_hosts": []
+  }}
+]"""
 
 
 @asynccontextmanager
@@ -113,25 +123,27 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Security Log Analyzer", lifespan=lifespan)
 
 
-class ThreatFinding(BaseModel):
-    threat_description: str
-    technique_id: str
-    technique_name: str
-    tactic: str
-    confidence: str         
-    url: str
-    evidence: str
+class AttackPattern(BaseModel):
+    pattern_name: str
+    severity: str           # CRITICAL, HIGH, MEDIUM, LOW
+    technique_ids: list[str]
+    technique_names: list[str]
+    description: str
+    events: list[str]
+    external_ips: list[str]
+    internal_hosts: list[str]
+    mitre_urls: list[str]
 
 
 class AnalysisResponse(BaseModel):
     filename: str
     file_size_bytes: int
     chunks_analyzed: int
-    findings: list[ThreatFinding]
+    patterns: list[AttackPattern]
+    critical_count: int
+    external_ip_count: int
+    internal_pivot_count: int
     raw_log_preview: str
-
-
-
 
 
 def build_user_message(chunk: str, chunk_num: int, total_chunks: int) -> str:
@@ -141,7 +153,7 @@ def build_user_message(chunk: str, chunk_num: int, total_chunks: int) -> str:
     return f"{header}Analyze this log content for security threats:\n\n```\n{chunk}\n```"
 
 
-# Core analysis 
+# Core analysis
 
 def normalize_log_content(raw_bytes: bytes, filename: str) -> str:
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "txt"
@@ -171,8 +183,6 @@ def chunk_log(content: str) -> list[str]:
         chunks.append("\n".join(chunk_lines))
         i += step
     return chunks
-
-
 
 
 def analyze_chunk(chunk: str, chunk_num: int, total: int) -> list[dict]:
@@ -217,53 +227,73 @@ def build_mitre_url(technique_id: str) -> str:
     return f"https://attack.mitre.org/techniques/{parts[0]}/"
 
 
-def enrich_finding(raw: dict) -> ThreatFinding | None:
-    tid = raw.get("technique_id", "").strip().upper()
-    if not tid:
+def enrich_pattern(raw: dict) -> AttackPattern | None:
+    pattern_name = raw.get("pattern_name", "").strip()
+    if not pattern_name:
         return None
 
-    technique = mitre_data.get_object_by_attack_id(
-        attack_id=tid, stix_type="attack-pattern"
+    technique_ids_raw = raw.get("technique_ids", [])
+    if isinstance(technique_ids_raw, str):
+        technique_ids_raw = [technique_ids_raw]
+
+    valid_ids: list[str] = []
+    valid_names: list[str] = []
+    valid_urls: list[str] = []
+
+    for tid in technique_ids_raw:
+        tid = tid.strip().upper()
+        if not tid:
+            continue
+        technique = mitre_data.get_object_by_attack_id(attack_id=tid, stix_type="attack-pattern")
+        if technique:
+            valid_ids.append(tid)
+            valid_names.append(technique.name)
+            valid_urls.append(build_mitre_url(tid))
+
+    severity = raw.get("severity", "MEDIUM").upper()
+    if severity not in ("CRITICAL", "HIGH", "MEDIUM", "LOW"):
+        severity = "MEDIUM"
+
+    events = raw.get("events", [])
+    if isinstance(events, str):
+        events = [events]
+
+    external_ips = raw.get("external_ips", [])
+    if isinstance(external_ips, str):
+        external_ips = [external_ips]
+
+    internal_hosts = raw.get("internal_hosts", [])
+    if isinstance(internal_hosts, str):
+        internal_hosts = [internal_hosts]
+
+    return AttackPattern(
+        pattern_name=pattern_name,
+        severity=severity,
+        technique_ids=valid_ids,
+        technique_names=valid_names,
+        description=raw.get("description", ""),
+        events=events,
+        external_ips=external_ips,
+        internal_hosts=internal_hosts,
+        mitre_urls=valid_urls,
     )
-    if technique is None:
-        return None
-
-    tactic = raw.get("tactic", "Unknown")
-    if hasattr(technique, "kill_chain_phases") and technique.kill_chain_phases:
-        for phase in technique.kill_chain_phases:
-            if phase.kill_chain_name == "mitre-attack":
-                tactic = phase.phase_name.replace("-", " ").title()
-                break
-
-    confidence = raw.get("confidence", "medium").lower()
-    if confidence not in ("high", "medium", "low"):
-        confidence = "medium"
-
-    return ThreatFinding(
-        threat_description=raw.get("threat_description", ""),
-        technique_id=tid,
-        technique_name=technique.name,
-        tactic=tactic,
-        confidence=confidence,
-        url=build_mitre_url(tid),
-        evidence=raw.get("evidence", ""),
-    )
 
 
-CONFIDENCE_RANK = {"high": 3, "medium": 2, "low": 1}
+SEVERITY_RANK = {"CRITICAL": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1}
 
 
-def deduplicate_findings(findings: list[ThreatFinding]) -> list[ThreatFinding]:
-    best: dict[str, ThreatFinding] = {}
-    for f in findings:
-        existing = best.get(f.technique_id)
+def deduplicate_patterns(patterns: list[AttackPattern]) -> list[AttackPattern]:
+    best: dict[str, AttackPattern] = {}
+    for p in patterns:
+        key = p.pattern_name.lower().strip()
+        existing = best.get(key)
         if existing is None:
-            best[f.technique_id] = f
-        elif CONFIDENCE_RANK.get(f.confidence, 0) > CONFIDENCE_RANK.get(existing.confidence, 0):
-            best[f.technique_id] = f
+            best[key] = p
+        elif SEVERITY_RANK.get(p.severity, 0) > SEVERITY_RANK.get(existing.severity, 0):
+            best[key] = p
     return sorted(
         best.values(),
-        key=lambda x: (-CONFIDENCE_RANK.get(x.confidence, 0), x.technique_id),
+        key=lambda x: (-SEVERITY_RANK.get(x.severity, 0), x.pattern_name),
     )
 
 
@@ -296,20 +326,31 @@ async def analyze_log(file: UploadFile = File(...)):
     text = normalize_log_content(contents, file.filename or "upload.txt")
     chunks = chunk_log(text)
 
-    all_findings: list[ThreatFinding] = []
+    all_patterns: list[AttackPattern] = []
     for i, chunk in enumerate(chunks, start=1):
         raw_results = analyze_chunk(chunk, i, len(chunks))
         for raw in raw_results:
-            finding = enrich_finding(raw)
-            if finding is not None:
-                all_findings.append(finding)
+            pattern = enrich_pattern(raw)
+            if pattern is not None:
+                all_patterns.append(pattern)
 
-    final_findings = deduplicate_findings(all_findings)
+    final_patterns = deduplicate_patterns(all_patterns)
+
+    unique_external_ips: set[str] = set()
+    unique_internal_hosts: set[str] = set()
+    for p in final_patterns:
+        unique_external_ips.update(p.external_ips)
+        unique_internal_hosts.update(p.internal_hosts)
+
+    critical_count = sum(1 for p in final_patterns if p.severity == "CRITICAL")
 
     return AnalysisResponse(
         filename=file.filename or "upload.txt",
         file_size_bytes=len(contents),
         chunks_analyzed=len(chunks),
-        findings=final_findings,
+        patterns=final_patterns,
+        critical_count=critical_count,
+        external_ip_count=len(unique_external_ips),
+        internal_pivot_count=len(unique_internal_hosts),
         raw_log_preview=text[:500],
     )

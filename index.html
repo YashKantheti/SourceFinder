@@ -7,9 +7,6 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     .drop-active { border-color: #3b82f6 !important; background-color: rgba(59, 130, 246, 0.08); }
-    details summary::-webkit-details-marker { display: none; }
-    details summary::before { content: '▶ '; font-size: 0.65rem; }
-    details[open] summary::before { content: '▼ '; font-size: 0.65rem; }
     @keyframes spin { to { transform: rotate(360deg); } }
     .spin { animation: spin 0.9s linear infinite; }
   </style>
@@ -88,21 +85,26 @@
     <!-- Results -->
     <div id="resultsSection" class="hidden space-y-4">
 
-      <!-- Summary bar -->
-      <div class="bg-gray-900 rounded-xl border border-gray-800 p-4 flex flex-wrap items-center gap-4 text-sm">
-        <div class="flex items-center gap-2">
-          <span class="text-gray-400">File:</span>
-          <span id="summaryFile" class="text-gray-200 font-mono"></span>
+      <!-- Summary sentence -->
+      <p id="summaryText" class="text-gray-300 text-sm"></p>
+
+      <!-- Stats bar -->
+      <div class="grid grid-cols-4 gap-px bg-gray-700 rounded-xl overflow-hidden text-center">
+        <div class="bg-gray-900 px-4 py-5">
+          <div class="text-3xl font-bold text-white" id="statPatterns">0</div>
+          <div class="text-xs text-gray-400 mt-1.5">Attack patterns</div>
         </div>
-        <div class="w-px h-4 bg-gray-700 hidden sm:block"></div>
-        <div class="flex items-center gap-2">
-          <span class="text-gray-400">Chunks analyzed:</span>
-          <span id="summaryChunks" class="text-gray-200"></span>
+        <div class="bg-gray-900 px-4 py-5">
+          <div class="text-3xl font-bold text-white" id="statCritical">0</div>
+          <div class="text-xs text-gray-400 mt-1.5">Critical risks</div>
         </div>
-        <div class="w-px h-4 bg-gray-700 hidden sm:block"></div>
-        <div class="flex items-center gap-2">
-          <span class="text-gray-400">Threats found:</span>
-          <span id="summaryCount" class="font-bold"></span>
+        <div class="bg-gray-900 px-4 py-5">
+          <div class="text-3xl font-bold text-white" id="statExternalIPs">0</div>
+          <div class="text-xs text-gray-400 mt-1.5">External IPs</div>
+        </div>
+        <div class="bg-gray-900 px-4 py-5">
+          <div class="text-3xl font-bold text-white" id="statInternalPivots">0</div>
+          <div class="text-xs text-gray-400 mt-1.5">Internal pivots</div>
         </div>
       </div>
 
@@ -115,7 +117,7 @@
         <p class="text-green-500 text-sm mt-1">The log file appears clean based on MITRE ATT&amp;CK patterns.</p>
       </div>
 
-      <!-- Findings list -->
+      <!-- Patterns list -->
       <div id="findingsList" class="space-y-3"></div>
 
     </div>
@@ -165,7 +167,6 @@
       try {
         const res = await fetch('/analyze', { method: 'POST', body: formData });
 
-
         const contentType = res.headers.get('content-type') || '';
         const data = contentType.includes('application/json')
           ? await res.json()
@@ -187,15 +188,17 @@
       hide('loadingSection');
       show('resultsSection');
 
-      document.getElementById('summaryFile').textContent = data.filename;
-      document.getElementById('summaryChunks').textContent = data.chunks_analyzed;
+      const count = data.patterns.length;
 
-      const count = data.findings.length;
-      const countEl = document.getElementById('summaryCount');
-      countEl.textContent = count;
-      countEl.className = count === 0 ? 'font-bold text-green-400'
-                        : count <= 3  ? 'font-bold text-yellow-400'
-                        :               'font-bold text-red-400';
+      document.getElementById('summaryText').textContent =
+        count === 0
+          ? 'No attack patterns were found in this log.'
+          : `Here's a breakdown of the risks I found across ${count} distinct attack pattern${count === 1 ? '' : 's'} in this log:`;
+
+      document.getElementById('statPatterns').textContent = count;
+      document.getElementById('statCritical').textContent = data.critical_count;
+      document.getElementById('statExternalIPs').textContent = data.external_ip_count;
+      document.getElementById('statInternalPivots').textContent = data.internal_pivot_count;
 
       if (count === 0) {
         show('noThreatsMsg');
@@ -203,38 +206,77 @@
       }
 
       const list = document.getElementById('findingsList');
-      list.innerHTML = data.findings.map(renderFinding).join('');
+      list.innerHTML = data.patterns.map(renderPattern).join('');
     }
 
-    function renderFinding(f) {
-      const borderClass = f.confidence === 'high'   ? 'border-red-500'
-                        : f.confidence === 'medium' ? 'border-yellow-500'
-                        :                             'border-blue-500';
-      const badgeClass  = f.confidence === 'high'   ? 'bg-red-900 text-red-300'
-                        : f.confidence === 'medium' ? 'bg-yellow-900 text-yellow-300'
-                        :                             'bg-blue-900 text-blue-300';
+    // --- Render a single attack pattern card ---
+    function renderPattern(p) {
+      const severityStyles = {
+        'CRITICAL': 'bg-red-600 text-white',
+        'HIGH':     'bg-orange-500 text-white',
+        'MEDIUM':   'bg-yellow-500 text-gray-900',
+        'LOW':      'bg-blue-500 text-white',
+      };
+      const badgeClass = severityStyles[p.severity] || 'bg-gray-600 text-white';
+
+      // Technique ID links
+      const techLinks = p.technique_ids.map((tid, i) => {
+        const url = p.mitre_urls[i] || '#';
+        return `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer"
+          class="font-mono text-blue-400 hover:text-blue-300 hover:underline text-sm">${escapeHtml(tid)}</a>`;
+      }).join(' <span class="text-gray-600">/</span> ');
+
+      // Events panel
+      let eventsHtml = '';
+      if (p.events && p.events.length > 0) {
+        eventsHtml = p.events.map(ev => {
+          let line = escapeHtml(ev);
+          // Highlight external IPs in orange
+          for (const ip of (p.external_ips || [])) {
+            const safeIp = escapeHtml(ip);
+            line = line.split(safeIp).join(
+              `<span class="text-orange-400 font-semibold">${safeIp}</span>`
+            );
+          }
+          return `<div class="font-mono text-xs text-gray-300 leading-5">${line}</div>`;
+        }).join('');
+      }
+
+      const uid = 'ep-' + Math.random().toString(36).slice(2, 9);
+
       return `
-      <div class="bg-gray-900 border border-gray-800 border-l-4 ${borderClass} rounded-r-xl p-5">
-        <div class="flex items-start justify-between gap-3 flex-wrap">
-          <div class="flex items-center gap-2 flex-wrap">
-            <a href="${escapeHtml(f.url)}" target="_blank" rel="noopener noreferrer"
-               class="font-mono font-bold text-blue-400 hover:text-blue-300 text-sm hover:underline"
-               title="View on attack.mitre.org">${escapeHtml(f.technique_id)}</a>
-            <span class="text-white font-semibold">${escapeHtml(f.technique_name)}</span>
-            <svg class="w-3.5 h-3.5 text-gray-500 inline" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
-            </svg>
+      <div class="bg-gray-900 border border-gray-800 rounded-xl p-5">
+        <div class="flex items-start gap-3">
+          <span class="text-xs font-bold px-2.5 py-1 rounded ${badgeClass} uppercase tracking-wide shrink-0 mt-0.5">${escapeHtml(p.severity)}</span>
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2 flex-wrap">
+              <span class="font-semibold text-white">${escapeHtml(p.pattern_name)}</span>
+              ${techLinks ? `<span class="text-gray-600 select-none">·</span> ${techLinks}` : ''}
+            </div>
+            <p class="text-gray-300 text-sm mt-2 leading-relaxed">${escapeHtml(p.description)}</p>
+            ${eventsHtml ? `
+            <button data-target="${uid}" onclick="toggleEvents(this)"
+              class="mt-3 text-xs text-gray-400 border border-gray-700 rounded-md px-3 py-1.5 hover:bg-gray-800 hover:text-gray-200 transition-colors">
+              Show events ▼
+            </button>
+            <div id="${uid}" class="hidden mt-3 bg-gray-950 border border-gray-800 rounded-lg p-3 space-y-0.5 overflow-x-auto">
+              ${eventsHtml}
+            </div>` : ''}
           </div>
-          <span class="text-xs font-bold px-2.5 py-1 rounded-full ${badgeClass} uppercase tracking-wide">${escapeHtml(f.confidence)}</span>
         </div>
-        <p class="text-gray-400 text-xs mt-1.5">Tactic: <span class="text-gray-300">${escapeHtml(f.tactic)}</span></p>
-        <p class="text-gray-200 text-sm mt-2">${escapeHtml(f.threat_description)}</p>
-        ${f.evidence ? `
-        <details class="mt-3">
-          <summary class="text-gray-500 text-xs cursor-pointer hover:text-gray-300 select-none">Evidence</summary>
-          <pre class="mt-2 bg-gray-950 border border-gray-800 text-green-400 text-xs p-3 rounded-lg overflow-x-auto whitespace-pre-wrap break-all">${escapeHtml(f.evidence)}</pre>
-        </details>` : ''}
       </div>`;
+    }
+
+    // --- Toggle events panel ---
+    function toggleEvents(btn) {
+      const panel = document.getElementById(btn.dataset.target);
+      if (panel.classList.contains('hidden')) {
+        panel.classList.remove('hidden');
+        btn.textContent = 'Hide events ▲';
+      } else {
+        panel.classList.add('hidden');
+        btn.textContent = 'Show events ▼';
+      }
     }
 
     // --- Helpers ---
