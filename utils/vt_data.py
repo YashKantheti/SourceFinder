@@ -6,7 +6,7 @@ Since UDC requires VT PID authentication, bundle a pre-exported CSV at data/vt_g
 To refresh data: log into https://udc.vt.edu/irdata/data/courses/grades and export to CSV.
 
 Expected CSV columns:
-    term, subject, course_number, instructor, A, A-, B+, B, B-, C+, C, C-, D+, D, D-, F, W
+    term, subject, course_number, instructor, gpa, A, A-, B+, B, B-, C+, C, C-, D+, D, D-, F, W
 """
 
 import csv
