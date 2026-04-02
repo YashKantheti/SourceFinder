@@ -1,4 +1,5 @@
 import os
+import sys
 import discord
 from discord.ext import commands
 from dotenv import load_dotenv
@@ -37,6 +38,12 @@ class CourseCompassBot(commands.Bot):
 
 
 def main():
+    if sys.version_info < (3, 10):
+        raise RuntimeError(
+            "CourseCompass requires Python 3.10 or newer. "
+            "Run with /usr/local/bin/python3.11 or your project .venv interpreter."
+        )
+
     token = os.environ.get("DISCORD_TOKEN")
     if not token:
         raise RuntimeError("DISCORD_TOKEN is not set in your .env file.")

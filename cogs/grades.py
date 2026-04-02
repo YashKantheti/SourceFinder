@@ -34,15 +34,26 @@ class GradesCog(commands.Cog):
             return
 
         grade_data, semester = result
+        insights = vt_data.query_course_insights(course)
         chart_file = charts.generate_grade_bar(course, grade_data, semester)
 
         embed = discord.Embed(
-            title=f"{course.upper()} — Grade Distribution",
-            description=_grade_summary(grade_data),
+            title=f"{course.upper()} - Grade Snapshot",
+            description=_overview_line(grade_data, insights),
             color=ORANGE,
         )
+        embed.add_field(
+            name="Grade Breakdown",
+            value=_grade_summary(grade_data),
+            inline=False,
+        )
+
+        if insights:
+            embed.add_field(name="Key Metrics", value=_kpi_cards(insights), inline=False)
+            embed.add_field(name="By Instructor", value=_instructor_table(insights), inline=False)
+
         embed.set_image(url="attachment://grades.png")
-        embed.set_footer(text=f"Source: VT DataCommons  •  {semester}")
+        embed.set_footer(text=f"Source: VT DataCommons | {semester}")
         await _safe_followup_send(interaction, embed=embed, file=chart_file)
 
     @grades.autocomplete("course")
@@ -92,7 +103,7 @@ class GradesCog(commands.Cog):
         chart_file = charts.generate_compare_bar(course1, data1, course2, data2, sem1, sem2)
 
         embed = discord.Embed(
-            title=f"Grade Comparison — {course1.upper()} vs {course2.upper()}",
+            title=f"Comparison: {course1.upper()} vs {course2.upper()}",
             color=MAROON,
         )
         embed.add_field(
@@ -106,7 +117,7 @@ class GradesCog(commands.Cog):
             inline=True
         )
         embed.set_image(url="attachment://compare.png")
-        embed.set_footer(text="Source: VT DataCommons")
+        embed.set_footer(text="Source: VT DataCommons | Tip: pair one heavy and one moderate course")
         await _safe_followup_send(interaction, embed=embed, file=chart_file)
 
     @compare.autocomplete("course1")
@@ -121,7 +132,7 @@ class GradesCog(commands.Cog):
 
 
 def _grade_summary(grade_data: dict) -> str:
-    """Build a short text summary of the most relevant grade buckets."""
+    """Build compact fixed-width summary for primary grade buckets."""
     a_pct = grade_data.get("A", 0) + grade_data.get("A-", 0)
     b_pct = grade_data.get("B+", 0) + grade_data.get("B", 0) + grade_data.get("B-", 0)
     c_pct = grade_data.get("C+", 0) + grade_data.get("C", 0) + grade_data.get("C-", 0)
@@ -131,13 +142,74 @@ def _grade_summary(grade_data: dict) -> str:
     )
     w_pct = grade_data.get("W", 0)
     lines = [
-        f"**A/A-:** {a_pct:.1f}%",
-        f"**B range:** {b_pct:.1f}%",
-        f"**C range:** {c_pct:.1f}%",
-        f"**D/F:** {d_f_pct:.1f}%",
-        f"**W (withdraw):** {w_pct:.1f}%",
+        _bar_line("A", a_pct),
+        _bar_line("B", b_pct),
+        _bar_line("C", c_pct),
+        _bar_line("D/F", d_f_pct),
+        _bar_line("W", w_pct),
     ]
-    return "\n".join(lines)
+    return "```\n" + "\n".join(lines) + "\n```"
+
+
+def _bar_line(label: str, pct: float) -> str:
+    units = max(0, min(20, int(round(pct / 5))))
+    return f"{label:<3} | {'#' * units}{'-' * (20 - units)} | {pct:>5.1f}%"
+
+
+def _overview_line(grade_data: dict, insights: dict | None) -> str:
+    a_rate = grade_data.get("A", 0) + grade_data.get("A-", 0)
+    w_rate = grade_data.get("W", 0)
+    est_gpa = _estimate_gpa(grade_data)
+
+    if not insights:
+        return f"All sections summary | Est GPA `{est_gpa:.2f}` | A-rate `{a_rate:.1f}%` | Withdraw `{w_rate:.1f}%`"
+
+    return (
+        f"Across `{insights['terms']}` terms and `{insights['sections']}` sections | "
+        f"Avg GPA `{insights['avg_gpa']:.2f}` | A-rate `{a_rate:.1f}%` | Withdraw `{w_rate:.1f}%`"
+    )
+
+
+def _kpi_cards(insights: dict) -> str:
+    return "```\n" + (
+        f"AVG GPA   {insights['avg_gpa']:.2f}\n"
+        f"A RATE    {insights['a_rate']:.1f}%\n"
+        f"WITHDRAW  {insights['w_rate']:.1f}%"
+    ) + "\n```"
+
+
+def _instructor_table(insights: dict) -> str:
+    rows = insights.get("instructors", [])[:4]
+    if not rows:
+        return "No instructor-level rows available."
+
+    header = f"{'Instructor':<16} {'Sec':>3} {'A%':>5} {'GPA':>5}"
+    body = [header, "-" * len(header)]
+    for r in rows:
+        name = (r["name"] or "Staff")[:16]
+        body.append(f"{name:<16} {r['sections']:>3} {r['a_rate']:>5.1f} {r['gpa']:>5.2f}")
+    return "```\n" + "\n".join(body) + "\n```"
+
+
+def _estimate_gpa(grade_data: dict) -> float:
+    weights = {
+        "A": 4.0,
+        "A-": 3.7,
+        "B+": 3.3,
+        "B": 3.0,
+        "B-": 2.7,
+        "C+": 2.3,
+        "C": 2.0,
+        "C-": 1.7,
+        "D+": 1.3,
+        "D": 1.0,
+        "D-": 0.7,
+        "F": 0.0,
+    }
+    total = 0.0
+    for grade, weight in weights.items():
+        total += (grade_data.get(grade, 0) / 100.0) * weight
+    return total
 
 
 def _not_found_embed(course: str, hint: str = "") -> discord.Embed:

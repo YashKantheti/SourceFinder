@@ -46,7 +46,7 @@ Advising style rules:
 
 Respond in plain text (no markdown headers), using concise bullet points."""
 
-
+#This function allows the AI to be used with a GitHub token. 
 def get_client() -> AsyncOpenAI:
     global _client
     if _client is None:

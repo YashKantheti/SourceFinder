@@ -178,6 +178,31 @@ CourseCompass/
 
 ## Troubleshooting
 
+### AI service import error with AnyIO
+
+If you see an error like:
+
+```
+AI service error: cannot import name 'set_current_async_library' from 'anyio._core._eventloop' (.../Library/Python/3.9/...)
+```
+
+you are likely running with Python 3.9 user-site packages instead of this project's environment.
+
+Use Python 3.10+ (recommended 3.11) and run from your project venv:
+
+```bash
+python3.11 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+python bot.py
+```
+
+If needed, force-repair the 3.9 user-site dependency stack:
+
+```bash
+/usr/bin/python3 -m pip install --user --upgrade --force-reinstall "anyio>=4,<5" "httpx>=0.28,<1" "httpcore>=1,<2" "openai>=1,<3"
+```
+
 ### Bot won't start
 - Check that `DISCORD_TOKEN` is set correctly in `.env`
 - Ensure your bot token is valid and hasn't been regenerated
