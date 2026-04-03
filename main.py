@@ -19,6 +19,9 @@ mitre_data: MitreAttackData = None
 openrouter_client: OpenAI = None
 system_prompt: str = None
 
+# Pick your OpenRouter model
+OPENROUTER_MODEL = "anthropic/claude-sonnet-4.5"
+
 BUNDLE_PATH = os.path.join(os.path.dirname(__file__), "enterprise-attack.json")
 
 
@@ -188,7 +191,7 @@ def chunk_log(content: str) -> list[str]:
 def analyze_chunk(chunk: str, chunk_num: int, total: int) -> list[dict]:
     try:
         response = openrouter_client.chat.completions.create(
-            model="openai/gpt-4o-mini",
+            model=OPENROUTER_MODEL,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": build_user_message(chunk, chunk_num, total)},
