@@ -354,3 +354,8 @@ async def analyze_log(file: UploadFile = File(...)):
         internal_pivot_count=len(unique_internal_hosts),
         raw_log_preview=text[:500],
     )
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="127.0.0.1", port=8000)
