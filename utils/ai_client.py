@@ -3,7 +3,8 @@ from openai import AsyncOpenAI
 
 _client: AsyncOpenAI | None = None
 
-#Tells the AI what to do, we used information that our advisors gave to write the context of each courses.
+#Tells the AI its promt and course information, 
+#we used information that our advisors gave to write the context of each courses.
 VT_CS_SYSTEM_PROMPT = """You are CourseCompass, an academic advisor for Virginia Tech CS students.
 You help students choose courses based on interests, year, workload tolerance, and career goals.
 
@@ -64,7 +65,7 @@ def get_client() -> AsyncOpenAI:
 
 # Builds a VT-specific advising request from student level and interests,
 # sends it to the configured chat model, and returns the first text response.
-# Uses the system prompt above to keep recommendations grounded in VT CS context.
+# Uses the system prompt above to keep recommendations in VT CS context.
 async def get_course_recommendations(interests: str, level: str) -> str:
     """Ask the AI for course recommendations given student interests and year/level."""
     client = get_client()
